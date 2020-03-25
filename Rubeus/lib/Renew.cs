@@ -2,6 +2,8 @@
 using System.IO;
 using System.Linq;
 using Asn1;
+using Rubeus.lib.Interop;
+
 
 namespace Rubeus
 {
@@ -9,8 +11,6 @@ namespace Rubeus
     {
         public static void TGTAutoRenew(KRB_CRED kirbi, string domainController = "", bool display = true)
         {
-            Console.WriteLine("[*] Action: Auto-Renew TGT");
-
             KRB_CRED currentKirbi = kirbi;
 
             while (true)
@@ -46,13 +46,13 @@ namespace Rubeus
                     System.Threading.Thread.Sleep((int)sleepMinutes * 60 * 1000);
 
                     Console.WriteLine("[*] Renewing TGT for {0}@{1}\r\n", userName, domain);
-                    byte[] bytes = TGT(currentKirbi, false, domainController, true);
+                    byte[] bytes = TGT(currentKirbi, null, false, domainController, true);
                     currentKirbi = new KRB_CRED(bytes);
                 }
             }
         }
 
-        public static byte[] TGT(KRB_CRED kirbi, bool ptt = false, string domainController = "", bool display = true)
+        public static byte[] TGT(KRB_CRED kirbi, string outfile = "", bool ptt = false, string domainController = "", bool display = true)
         {
             // extract out the info needed for the TGS-REQ/AP-REQ renewal
             string userName = kirbi.enc_part.ticket_info[0].pname.name_string[0];
@@ -62,16 +62,11 @@ namespace Rubeus
             Interop.KERB_ETYPE etype = (Interop.KERB_ETYPE)kirbi.enc_part.ticket_info[0].key.keytype;
 
             // request the new TGT renewal
-            return TGT(userName, domain, ticket, clientKey, etype, ptt, domainController, display);
+            return TGT(userName, domain, ticket, clientKey, etype, outfile, ptt, domainController, display);
         }
 
-        public static byte[] TGT(string userName, string domain, Ticket providedTicket, byte[] clientKey, Interop.KERB_ETYPE etype, bool ptt, string domainController = "", bool display = true)
+        public static byte[] TGT(string userName, string domain, Ticket providedTicket, byte[] clientKey, Interop.KERB_ETYPE etype, string outfile, bool ptt, string domainController = "", bool display = true)
         {
-            if (display)
-            {
-                Console.WriteLine("[*] Action: Renew TGT\r\n");
-            }
-
             string dcIP = Networking.GetDCIP(domainController, display);
             if (String.IsNullOrEmpty(dcIP)) { return null; }
 
@@ -159,17 +154,36 @@ namespace Rubeus
                 if (display)
                 {
                     Console.WriteLine("[*] base64(ticket.kirbi):\r\n", kirbiString);
-
-                    // display the .kirbi base64, columns of 80 chararacters
-                    foreach (string line in Helpers.Split(kirbiString, 80))
+                    if (Rubeus.Program.wrapTickets)
                     {
-                        Console.WriteLine("      {0}", line);
+                        // display the .kirbi base64, columns of 80 chararacters
+                        foreach (string line in Helpers.Split(kirbiString, 80))
+                        {
+                            Console.WriteLine("      {0}", line);
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("      {0}", kirbiString);
                     }
                 }
+
+                if (!String.IsNullOrEmpty(outfile))
+                {
+                    outfile = Helpers.MakeValidFileName(outfile);
+                    if (Helpers.WriteBytesToFile(outfile, kirbiBytes))
+                    {
+                        if (display)
+                        {
+                            Console.WriteLine("\r\n[*] Ticket written to {0}\r\n", outfile);
+                        }
+                    }
+                }
+
                 if (ptt)
                 {
                     // pass-the-ticket -> import into LSASS
-                    LSA.ImportTicket(kirbiBytes, new Interop.LUID());
+                    LSA.ImportTicket(kirbiBytes, new LUID());
                 }
                 return kirbiBytes;
             }
